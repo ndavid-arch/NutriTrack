@@ -1,3 +1,7 @@
+// Migration script — run once with: node backend/migrate.js
+// Creates all required tables in Aiven PostgreSQL if they don't already exist.
+// Safe to re-run: IF NOT EXISTS prevents data loss on subsequent runs.
+
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 const pool = require('./db');
 
@@ -6,6 +10,9 @@ async function migrate() {
   try {
     console.log('[DB] Connected to Aiven PostgreSQL');
 
+    // Users table — stores account credentials and physical stats.
+    // UNIQUE constraints on username and email prevent duplicate accounts.
+    // goal defaults to 2000 kcal/day which is the general recommended intake.
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         id          SERIAL PRIMARY KEY,
@@ -21,6 +28,9 @@ async function migrate() {
     `);
     console.log('[DB] ✓ users table ready');
 
+    // Meals table — each row is one food item in one meal slot for one day.
+    // ON DELETE CASCADE means all meals are automatically removed when a user deletes their account.
+    // CHECK constraint enforces that only valid meal types can be inserted.
     await client.query(`
       CREATE TABLE IF NOT EXISTS meals (
         id          SERIAL PRIMARY KEY,
@@ -39,6 +49,9 @@ async function migrate() {
     `);
     console.log('[DB] ✓ meals table ready');
 
+    // Food cache table — stores Edamam API results to avoid repeated API calls.
+    // food_id is the unique identifier from Edamam so the same food is never stored twice.
+    // health_labels is stored as a PostgreSQL array (TEXT[]) for efficient filtering.
     await client.query(`
       CREATE TABLE IF NOT EXISTS food_cache (
         id           SERIAL PRIMARY KEY,
@@ -62,6 +75,7 @@ async function migrate() {
   } catch (err) {
     console.error('[DB] Migration failed:', err.message);
   } finally {
+    // Always release the client back to the pool and close the connection
     client.release();
     await pool.end();
   }
