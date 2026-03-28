@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>NutriTrack — Login</title>
+  <link rel="stylesheet" href="css/style.css"/>
+</head>
+<body>
+  <div class="auth-wrap">
+    <div class="auth-box">
+      <div class="auth-logo">🥗</div>
+      <h1>NutriTrack</h1>
+      <p>Your personal calorie &amp; meal planner</p>
+
+      <div class="tabs">
+        <button class="tab active" onclick="switchTab('login')">Login</button>
+        <button class="tab" onclick="switchTab('signup')">Sign Up</button>
+      </div>
+
+      <div id="alert" class="alert"></div>
+
+      <!-- LOGIN -->
+      <div id="loginPanel" class="form-panel active">
+        <div class="form-group">
+          <label>Username</label>
+          <input type="text" id="loginUsername" placeholder="Enter your username"/>
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <div class="pw-wrap">
+            <input type="password" id="loginPassword" placeholder="Enter your password"/>
+            <button type="button" class="pw-toggle" onclick="togglePw('loginPassword', this)" aria-label="Toggle password visibility">👁</button>
+          </div>
+        </div>
+        <button class="btn btn-green" style="width:100%;padding:0.75rem;font-size:1rem" onclick="login()">Login</button>
+      </div>
+
+      <!-- SIGNUP -->
+      <div id="signupPanel" class="form-panel">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Username</label>
+            <input type="text" id="signupUsername" placeholder="Choose a username"/>
+          </div>
+          <div class="form-group">
+            <label>Email</label>
+            <input type="email" id="signupEmail" placeholder="Your email"/>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <div class="pw-wrap">
+            <input type="password" id="signupPassword" placeholder="Create a password"/>
+            <button type="button" class="pw-toggle" onclick="togglePw('signupPassword', this)" aria-label="Toggle password visibility">👁</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Confirm Password</label>
+          <div class="pw-wrap">
+            <input type="password" id="signupConfirm" placeholder="Re-enter your password"/>
+            <button type="button" class="pw-toggle" onclick="togglePw('signupConfirm', this)" aria-label="Toggle confirm password visibility">👁</button>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Age</label>
+            <input type="number" id="signupAge" placeholder="e.g. 22"/>
+          </div>
+          <div class="form-group">
+            <label>Weight (kg)</label>
+            <input type="number" id="signupWeight" placeholder="e.g. 70"/>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Height (cm)</label>
+          <input type="number" id="signupHeight" placeholder="e.g. 175"/>
+        </div>
+        <button class="btn btn-green" style="width:100%;padding:0.75rem;font-size:1rem" onclick="signup()">Create Account</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/api.js"></script>
+  <script>
+    // Redirect if already logged in
+    if (Session.get()) window.location.href = '/dashboard.html';
+
+    function switchTab(tab) {
+      document.querySelectorAll('.tab').forEach((t, i) => {
+        t.classList.toggle('active', (i === 0 && tab === 'login') || (i === 1 && tab === 'signup'));
+      });
+      document.getElementById('loginPanel').classList.toggle('active', tab === 'login');
+      document.getElementById('signupPanel').classList.toggle('active', tab === 'signup');
+      hideAlert();
+    }
+
+    function showAlert(msg, type = 'error') {
+      const el = document.getElementById('alert');
+      el.textContent = msg;
+      el.className = `alert alert-${type} show`;
+    }
+
+    function hideAlert() {
+      document.getElementById('alert').className = 'alert';
+    }
+
+    const PASS_RE  = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/;
+    const EMAIL_RE = /^[a-z0-9._%+\-]+@(gmail\.com|alustudent\.com|alustaff\.com)$/;
+
+    function togglePw(inputId, btn) {
+      const input = document.getElementById(inputId);
+      const showing = input.type === 'text';
+      input.type = showing ? 'password' : 'text';
+      btn.textContent = showing ? '👁' : '🙈';
+    }
+
+    async function login() {
+      const username = document.getElementById('loginUsername').value.trim();
+      const password = document.getElementById('loginPassword').value;
+      if (!username || !password) return showAlert('Please fill in all fields');
+      if (!PASS_RE.test(password)) return showAlert('Password must be 8+ characters with uppercase, lowercase, a number and a special character');
+
+      try {
+        const data = await API.login({ username, password });
+        Session.save(data.user);
+        window.location.href = '/dashboard.html';
+      } catch (err) {
+        showAlert(err.message);
+      }
+    }
+
+    async function signup() {
+      const username = document.getElementById('signupUsername').value.trim();
+      const email    = document.getElementById('signupEmail').value.trim();
+      const password = document.getElementById('signupPassword').value;
+      const confirm  = document.getElementById('signupConfirm').value;
+      const age      = document.getElementById('signupAge').value.trim();
+      const weight   = document.getElementById('signupWeight').value.trim();
+      const height   = document.getElementById('signupHeight').value.trim();
+
+      if (!username || !email || !password || !confirm) return showAlert('All fields are required');
+
+      if (/\d/.test(username))
+        return showAlert('Username cannot contain numbers');
+
+      if (email !== email.toLowerCase() || !EMAIL_RE.test(email))
+        return showAlert('Email must be lowercase and end with @gmail.com, @alustudent.com or @alustaff.com');
+
+      if (!PASS_RE.test(password))
+        return showAlert('Password must be 8+ characters with uppercase, lowercase, a number and a special character');
+
+      if (password !== confirm)
+        return showAlert('Passwords do not match');
+
+      if (!age || isNaN(age) || age < 1 || age > 120)
+        return showAlert('Age must be a number between 1 and 120');
+
+      if (!weight || isNaN(weight) || weight < 20 || weight > 500)
+        return showAlert('Weight must be a number between 20 and 500 kg');
+
+      if (!height || isNaN(height) || height < 50 || height > 272)
+        return showAlert('Height must be a number between 50 and 272 cm');
+
+      try {
+        const data = await API.signup({ username, email, password, age, weight, height });
+        Session.save(data.user);
+        window.location.href = '/dashboard.html';
+      } catch (err) {
+        showAlert(err.message);
+      }
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        document.querySelector('.form-panel.active').id === 'loginPanel' ? login() : signup();
+      }
+    });
+  </script>
+</body>
+</html>
