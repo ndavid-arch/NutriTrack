@@ -6,9 +6,9 @@ NutriTrack is a full-stack web application that helps users track their daily ca
 
 ## Live Demo
 
-- **Web01:** `http://<web01-ip>`
-- **Web02:** `http://<web02-ip>`
-- **Load Balancer:** `http://<lb01-ip>` ← main access point
+- **Web01:** `http://18.208.109.195`
+- **Web02:** `http://35.175.137.170`
+- **Load Balancer:** `http://54.165.134.239` ← main access point
 
 ---
 
@@ -20,7 +20,7 @@ NutriTrack is a full-stack web application that helps users track their daily ca
 - **Meal Planner** — Log meals under Breakfast, Lunch, and Dinner for any date
 - **Daily Calorie Goal** — Set a personal calorie target with a live progress bar
 - **Weekly Reports** — 7-day calorie trend chart with your goal line, best day, and total logged
-- **API Response Caching** — Food search results are cached locally to reduce API calls and improve speed
+- **API Response Caching** — Food search results are cached in PostgreSQL to reduce API calls and improve speed
 - **Error Handling** — Graceful messages for API failures, invalid inputs, and empty searches
 - **Responsive Design** — Mobile-friendly with collapsible hamburger navigation
 
@@ -32,6 +32,7 @@ NutriTrack is a full-stack web application that helps users track their daily ca
 |---|---|
 | Frontend | HTML, CSS, JavaScript |
 | Backend | Node.js + Express |
+| Database | PostgreSQL (Aiven Cloud) |
 | API | Edamam Food Database API v2 |
 | Charts | Chart.js |
 | Process Manager | PM2 |
@@ -63,19 +64,19 @@ nutritrack/
 │   ├── planner.html        # Meal planner by date
 │   ├── reports.html        # Weekly calorie report + chart
 │   ├── css/
-│   │   └── style.css
+│   │   └── style.css       # Global stylesheet
 │   └── js/
 │       ├── api.js          # Session helpers + fetch wrapper
 │       └── nav.js          # Shared navigation, profile modal
 ├── backend/
 │   ├── server.js           # Express entry point
-│   ├── routes/
-│   │   ├── auth.js         # Signup / login endpoints
-│   │   ├── food.js         # Food search + Edamam proxy + cache
-│   │   └── meals.js        # Meal log CRUD
-│   └── data/
-│       └── food_cache.json # Local cache for API responses
-├── .env                    # API keys (not in repo)
+│   ├── db.js               # PostgreSQL connection (Aiven)
+│   ├── migrate.js          # Database table creation script
+│   └── routes/
+│       ├── auth.js         # Signup / login / update / delete endpoints
+│       ├── food.js         # Food search + Edamam proxy + DB cache
+│       └── meals.js        # Meal log CRUD endpoints
+├── .env.example            # Environment variable template
 ├── .gitignore
 ├── package.json
 └── README.md
@@ -87,15 +88,16 @@ nutritrack/
 
 ### Prerequisites
 
-- Node.js v14 or higher
+- Node.js v18 or higher
 - npm
+- PostgreSQL database (Aiven Cloud or local)
 - An Edamam developer account with Food Database API access: https://developer.edamam.com
 
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/<your-username>/nutritrack.git
-cd nutritrack
+git clone https://github.com/ndavid-arch/NutriTrack.git
+cd NutriTrack
 ```
 
 ### 2. Install dependencies
@@ -109,14 +111,23 @@ npm install
 Create a `.env` file in the root of the project:
 
 ```env
+PORT=3000
+DATABASE_URL=your_postgresql_connection_string
 EDAMAM_APP_ID=your_edamam_app_id
 EDAMAM_APP_KEY=your_edamam_app_key
-PORT=3000
 ```
 
-> API keys are provided separately in the assignment submission comment section as required.
+> API keys and database credentials are provided separately in the assignment submission comment section as required.
 
-### 4. Run the application
+### 4. Run the database migration
+
+```bash
+node backend/migrate.js
+```
+
+This creates the `users`, `meals`, and `food_cache` tables in your PostgreSQL database.
+
+### 5. Run the application
 
 ```bash
 npm start
@@ -130,13 +141,13 @@ Open your browser at `http://localhost:3000`
 
 Both **Web01** and **Web02** are configured identically. The **Load Balancer (Lb01)** distributes traffic between them using Nginx round-robin.
 
-### Step 1 — Install Node.js on each web server
+### Step 1 — Install Node.js and Git on each web server
 
 SSH into Web01 and Web02 and run:
 
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-sudo apt-get install -y nodejs
+sudo apt-get install -y nodejs git
 node -v   # confirm installation
 ```
 
@@ -152,34 +163,39 @@ PM2 keeps the Node.js server running after SSH sessions end and restarts it auto
 
 ```bash
 cd /var/www
-sudo git clone https://github.com/<your-username>/nutritrack.git
-cd nutritrack
-npm install
+sudo git clone https://github.com/ndavid-arch/NutriTrack.git
+cd NutriTrack
+sudo npm install
 ```
 
 ### Step 4 — Set up the environment file
 
 ```bash
-sudo nano .env
-```
-
-Paste in:
-
-```env
+sudo tee /var/www/NutriTrack/.env << 'EOF'
+PORT=3000
+DATABASE_URL=your_postgresql_connection_string
 EDAMAM_APP_ID=your_edamam_app_id
 EDAMAM_APP_KEY=your_edamam_app_key
-PORT=3000
+EOF
 ```
 
-### Step 5 — Start the app with PM2
+### Step 5 — Run the database migration
 
 ```bash
-pm2 start backend/server.js --name nutritrack
-pm2 startup     # makes PM2 auto-start on reboot
-pm2 save
+cd /var/www/NutriTrack
+sudo node backend/migrate.js
 ```
 
-### Step 6 — Configure Nginx as a reverse proxy
+### Step 6 — Start the app with PM2
+
+```bash
+cd /var/www/NutriTrack
+sudo pm2 start backend/server.js --name nutritrack
+sudo pm2 startup
+sudo pm2 save
+```
+
+### Step 7 — Configure Nginx as a reverse proxy
 
 ```bash
 sudo nano /etc/nginx/sites-available/nutritrack
@@ -192,13 +208,23 @@ server {
     listen 80;
     server_name _;
 
-    location / {
+    # Serve static frontend files
+    root /var/www/NutriTrack/frontend;
+    index index.html;
+
+    # Proxy API requests to Node.js backend
+    location /api/ {
         proxy_pass http://localhost:3000;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
         proxy_set_header Host $host;
         proxy_cache_bypass $http_upgrade;
+    }
+
+    # Serve frontend pages directly
+    location / {
+        try_files $uri $uri/ /index.html;
     }
 }
 ```
@@ -207,12 +233,12 @@ Enable and reload:
 
 ```bash
 sudo ln -s /etc/nginx/sites-available/nutritrack /etc/nginx/sites-enabled/
-sudo rm /etc/nginx/sites-enabled/default
+sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-Repeat **Steps 1–6** on Web02.
+Repeat **Steps 1–7** on Web02.
 
 ---
 
@@ -228,8 +254,8 @@ Paste:
 
 ```nginx
 upstream nutritrack_backend {
-    server <web01-ip>;
-    server <web02-ip>;
+    server 18.208.109.195;
+    server 35.175.137.170;
 }
 
 server {
@@ -249,7 +275,7 @@ Enable and reload:
 
 ```bash
 sudo ln -s /etc/nginx/sites-available/nutritrack-lb /etc/nginx/sites-enabled/
-sudo rm /etc/nginx/sites-enabled/default
+sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t
 sudo systemctl reload nginx
 ```
@@ -259,7 +285,7 @@ sudo systemctl reload nginx
 Send multiple requests and confirm both servers respond:
 
 ```bash
-for i in {1..6}; do curl -s http://<lb01-ip> | grep -o "NutriTrack"; done
+for i in {1..6}; do curl -s http://54.165.134.239 | grep -o "NutriTrack"; done
 ```
 
 You can also verify from PM2 logs on each server:
@@ -301,16 +327,18 @@ All user inputs are validated with regex before any data is processed or stored.
 | Food not found in API | Returns `404` with a user-friendly message |
 | Edamam API is down | Returns `503` with "Service temporarily unavailable" |
 | Invalid/missing API key | Returns `500` with "API configuration error" |
+| Request timeout | Returns `504` with "Request timed out" |
 | Empty search input | Frontend blocks the request and shows inline validation |
 | Invalid numeric inputs | Regex validation rejects letters, enforces min/max ranges |
 | Session expired | Redirected to login page automatically |
+| Database unreachable | Returns `500` with a graceful error message |
 
 ---
 
 ## Bonus Features Implemented
 
 - **User Authentication** — Signup, login, session management, account deletion
-- **API Response Caching** — Results saved to `food_cache.json`; repeated searches never hit the API twice
+- **PostgreSQL Caching** — Food search results cached in Aiven PostgreSQL; repeated searches never hit the API twice
 - **Data Visualization** — Chart.js 7-day calorie trend with a dashed daily goal line
 - **Advanced Input Validation** — Regex on all forms (password strength, email domain whitelist, numeric ranges)
 - **Dietary Filter System** — 6 one-click health label filters (Vegan, Gluten-Free, Dairy-Free, Keto, Paleo, Sugar-Free)
@@ -331,6 +359,9 @@ The Nutrition Analysis API only accepts specific ingredient strings like `"1 cup
 **4. Timezone bug in meal planner**
 `new Date().toISOString()` returns UTC time, causing the wrong date to appear for users in UTC+ timezones. Fixed with a local date helper function using `getFullYear()`, `getMonth()`, and `getDate()`.
 
+**5. File permission errors on server**
+Using `sudo git clone` made all files owned by root, preventing direct file creation with `nano`. Fixed by using `sudo tee` to write files as root when creating the `.env` on the server.
+
 ---
 
 ## Credits & Attribution
@@ -339,22 +370,26 @@ The Nutrition Analysis API only accepts specific ingredient strings like `"1 cup
   Food nutritional data, dietary labels, and search powered by Edamam
 - **Chart.js** — https://www.chartjs.org
   Used for the 7-day calorie trend visualization
+- **Aiven PostgreSQL** — https://aiven.io
+  Cloud-hosted PostgreSQL database for users, meals, and food cache
 - **Express.js** — https://expressjs.com
 - **Axios** — https://axios-http.com
 - **dotenv** — https://github.com/motdotla/dotenv
+- **PM2** — https://pm2.keymetrics.io
 
 ---
 
 ## Security Notes
 
 - API keys are stored in `.env` and listed in `.gitignore` — never committed to the repository
-- All Edamam API calls are proxied through the backend
+- All Edamam API calls are proxied through the backend — keys never reach the browser
 - Passwords are encoded before storage
 - All user inputs are validated with regex before processing
+- SQL queries use parameterized statements to prevent SQL injection
 - `.env` file contents are provided in the assignment submission comment section as instructed
 
 ---
 
 ## Author
 
-Built as part of the ALU Software Engineering curriculum — Playing Around with APIs assignment.
+Built as part of the ALX Software Engineering curriculum — Playing Around with APIs assignment.
