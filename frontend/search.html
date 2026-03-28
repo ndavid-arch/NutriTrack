@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>NutriTrack — Food Search</title>
+  <link rel="stylesheet" href="css/style.css"/>
+</head>
+<body class="has-nav">
+
+<nav id="navbar">
+  <a class="nav-brand" href="/dashboard.html">NutriTrack</a>
+
+  <div class="nav-links">
+    <a href="/dashboard.html">Home</a>
+    <a href="/search.html" class="active">Search</a>
+    <a href="/planner.html">Planner</a>
+    <a href="/reports.html">Reports</a>
+  </div>
+
+  <div class="nav-right">
+    <div class="nav-profile" id="navProfile">
+      <div class="nav-avatar" id="navAvatar" onclick="toggleProfileMenu(event)"></div>
+      <div class="profile-dropdown" id="profileDropdown">
+        <div class="profile-dropdown-header">
+          <div class="mini-avatar" id="dropdownAvatar"></div>
+          <span id="dropdownName"></span>
+        </div>
+        <button onclick="openEditProfile()">✏️ Edit Profile</button>
+        <button class="logout-btn" onclick="logout()">🚪 Logout</button>
+      </div>
+    </div>
+    <button class="hamburger" id="hamburger" onclick="toggleMenu()" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+
+  <div class="mobile-menu" id="mobileMenu">
+    <a href="/dashboard.html">Home</a>
+    <a href="/search.html" class="active">Search</a>
+    <a href="/planner.html">Planner</a>
+    <a href="/reports.html">Reports</a>
+    <a href="#" onclick="logout()" class="mobile-logout">Logout</a>
+  </div>
+</nav>
+
+<div class="container">
+
+  <div class="card">
+    <h2>Search Food</h2>
+    <div class="search-bar">
+      <input type="text" id="searchInput" placeholder="e.g. milk, juice, chicken, rice..." />
+      <button class="btn btn-green" onclick="searchFood()">Search</button>
+    </div>
+    <p style="font-size:0.8rem;color:var(--muted)">
+      Type any food — returns all matches. Nutrition shown per 100g.
+    </p>
+
+    <!-- Health label filters -->
+    <div id="healthFilters" style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-top:0.8rem">
+      <span style="font-size:0.8rem;color:var(--muted);align-self:center">Filter:</span>
+      <button class="filter-btn" data-health="">All</button>
+      <button class="filter-btn" data-health="vegan">🌱 Vegan</button>
+      <button class="filter-btn" data-health="vegetarian">🥦 Vegetarian</button>
+      <button class="filter-btn" data-health="gluten-free">🌾 Gluten-Free</button>
+      <button class="filter-btn" data-health="dairy-free">🥛 Dairy-Free</button>
+      <button class="filter-btn" data-health="keto-friendly">🥑 Keto</button>
+      <button class="filter-btn" data-health="sugar-conscious">🍬 Sugar-Free</button>
+    </div>
+  </div>
+
+  <!-- Add to meal controls (shown after search) -->
+  <div id="addToMealBar" class="card" style="display:none">
+    <h2>Add selected food to a meal</h2>
+    <div style="display:flex;gap:0.8rem;align-items:center;flex-wrap:wrap">
+      <input type="date" id="mealDate" style="width:auto"/>
+      <select id="mealSlot" style="width:auto">
+        <option value="breakfast">Breakfast</option>
+        <option value="lunch">Lunch</option>
+        <option value="dinner">Dinner</option>
+      </select>
+      <button class="btn btn-green" onclick="addToMeal()">Add to Meal</button>
+    </div>
+    <div id="addAlert" class="alert" style="margin-top:0.8rem"></div>
+  </div>
+
+  <!-- Results -->
+  <div id="searchStatus" style="color:var(--muted);font-size:0.9rem;margin-bottom:1rem;display:none"></div>
+  <div id="foodResults" class="food-results"></div>
+
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/nav.js"></script>
+<script>
+  const user = Session.require();
+
+  // Set today's date as default
+  const _d = new Date();
+  document.getElementById('mealDate').value =
+    `${_d.getFullYear()}-${String(_d.getMonth()+1).padStart(2,'0')}-${String(_d.getDate()).padStart(2,'0')}`;
+
+  let selectedFood  = null;
+  let activeHealth  = '';   // currently selected health filter
+
+  // ── Health filter buttons ────────────────────────────────────────────────────
+  document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activeHealth = btn.dataset.health;
+      // Re-run search if there's already a query
+      const q = document.getElementById('searchInput').value.trim();
+      if (q) searchFood();
+    });
+  });
+  // Default: "All" active
+  document.querySelector('.filter-btn[data-health=""]').classList.add('active');
+
+  // ── Search ──────────────────────────────────────────────────────────────────
+  async function searchFood() {
+    const query = document.getElementById('searchInput').value.trim();
+    if (!query) return;
+
+    const status  = document.getElementById('searchStatus');
+    const results = document.getElementById('foodResults');
+    status.style.display = 'block';
+    status.innerHTML = '<span class="spinner"></span> Searching...';
+    results.innerHTML = '';
+    document.getElementById('addToMealBar').style.display = 'none';
+    selectedFood = null;
+
+    let data;
+    try {
+      data = await API.searchFood(query, activeHealth);
+    } catch (err) {
+      status.textContent = '⚠️ Could not reach the server. Make sure the app is running on http://localhost:3000';
+      return;
+    }
+
+    if (!data || data.error) {
+      status.textContent = '❌ ' + (data?.error || 'Something went wrong. Please try again.');
+      return;
+    }
+
+    const sourceLabel = data.source === 'cache'
+      ? '<span class="source-badge source-cache">📦 Local Cache</span>'
+      : '<span class="source-badge source-api">🌐 Edamam API</span>';
+
+    status.innerHTML = `Found ${data.results.length} result(s) ${sourceLabel}`;
+
+    // Friendly health label display map
+    const healthMap = {
+      'VEGAN': '🌱 Vegan', 'VEGETARIAN': '🥦 Vegetarian',
+      'GLUTEN_FREE': '🌾 Gluten-Free', 'DAIRY_FREE': '🥛 Dairy-Free',
+      'KETO_FRIENDLY': '🥑 Keto', 'SUGAR_CONSCIOUS': '🍬 Sugar-Free',
+      'PALEO': '🥩 Paleo', 'PEANUT_FREE': '🥜 Peanut-Free',
+    };
+    const SHOW_LABELS = Object.keys(healthMap);
+
+    results.innerHTML = data.results.map((food, i) => {
+      const labels = (food.healthLabels || [])
+        .filter(l => SHOW_LABELS.includes(l))
+        .map(l => `<span class="health-tag">${healthMap[l]}</span>`)
+        .join('');
+      return `
+        <div class="food-card" id="foodCard${i}" onclick="selectFood(${i})" style="cursor:pointer">
+          <div class="food-info">
+            <h3>${food.name}</h3>
+            <p style="color:var(--muted);font-size:0.82rem">${food.serving}</p>
+            <div class="food-macros">
+              <span><strong>${food.protein}g</strong>Protein</span>
+              <span><strong>${food.carbs}g</strong>Carbs</span>
+              <span><strong>${food.fat}g</strong>Fat</span>
+              ${food.fiber ? `<span><strong>${food.fiber}g</strong>Fiber</span>` : ''}
+            </div>
+            ${labels ? `<div class="health-tags" style="margin-top:0.4rem">${labels}</div>` : ''}
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:0.4rem">
+            <div class="calories-badge">${food.calories} kcal</div>
+          </div>
+        </div>`;
+    }).join('');
+
+    window._searchResults = data.results;
+  }
+
+  function selectFood(index) {
+    document.querySelectorAll('.food-card').forEach(c => c.style.borderColor = '');
+    document.getElementById(`foodCard${index}`).style.borderColor = 'var(--green)';
+    selectedFood = window._searchResults[index];
+    document.getElementById('addToMealBar').style.display = 'block';
+  }
+
+  async function addToMeal() {
+    if (!selectedFood) return;
+    const date    = document.getElementById('mealDate').value;
+    const slot    = document.getElementById('mealSlot').value;
+    const alertEl = document.getElementById('addAlert');
+
+    try {
+      await API.addMeal(user.username, date, slot, selectedFood);
+      alertEl.className   = 'alert alert-success show';
+      alertEl.textContent = `✓ ${selectedFood.name} added to ${slot} on ${date}`;
+      setTimeout(() => alertEl.className = 'alert', 3000);
+    } catch (err) {
+      alertEl.className   = 'alert alert-error show';
+      alertEl.textContent = '❌ ' + err.message;
+    }
+  }
+
+  // Search on Enter key
+  document.getElementById('searchInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') searchFood();
+  });
+
+  function logout() {
+    Session.clear();
+    window.location.href = '/index.html';
+  }
+</script>
+</body>
+</html>
