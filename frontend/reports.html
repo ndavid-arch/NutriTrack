@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>NutriTrack — Weekly Reports</title>
+  <link rel="stylesheet" href="css/style.css"/>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="has-nav">
+
+<nav id="navbar">
+  <a class="nav-brand" href="/dashboard.html">NutriTrack</a>
+
+  <div class="nav-links">
+    <a href="/dashboard.html">Home</a>
+    <a href="/search.html">Search</a>
+    <a href="/planner.html">Planner</a>
+    <a href="/reports.html" class="active">Reports</a>
+  </div>
+
+  <div class="nav-right">
+    <div class="nav-profile" id="navProfile">
+      <div class="nav-avatar" id="navAvatar" onclick="toggleProfileMenu(event)"></div>
+      <div class="profile-dropdown" id="profileDropdown">
+        <div class="profile-dropdown-header">
+          <div class="mini-avatar" id="dropdownAvatar"></div>
+          <span id="dropdownName"></span>
+        </div>
+        <button onclick="openEditProfile()">✏️ Edit Profile</button>
+        <button class="logout-btn" onclick="logout()">🚪 Logout</button>
+      </div>
+    </div>
+    <button class="hamburger" id="hamburger" onclick="toggleMenu()" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+
+  <div class="mobile-menu" id="mobileMenu">
+    <a href="/dashboard.html">Home</a>
+    <a href="/search.html">Search</a>
+    <a href="/planner.html">Planner</a>
+    <a href="/reports.html" class="active">Reports</a>
+    <a href="#" onclick="logout()" class="mobile-logout">Logout</a>
+  </div>
+</nav>
+
+<div class="container">
+
+  <!-- Weekly stats -->
+  <div class="report-cards">
+    <div class="stat-card">
+      <div class="value" id="weekTotal">—</div>
+      <div class="label">Total This Week</div>
+    </div>
+    <div class="stat-card">
+      <div class="value" id="weekAvg">—</div>
+      <div class="label">Daily Average</div>
+    </div>
+    <div class="stat-card">
+      <div class="value" id="bestDay">—</div>
+      <div class="label">Best Day (kcal)</div>
+    </div>
+  </div>
+
+  <!-- Insight messages -->
+  <div id="insights"></div>
+
+  <!-- Chart -->
+  <div class="card">
+    <h2>7-Day Calorie Trend</h2>
+    <canvas id="weekChart" height="120"></canvas>
+  </div>
+
+
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/nav.js"></script>
+<script>
+  const user = Session.require();
+  let chartInstance = null;
+
+  if (user) loadReports();
+
+  async function loadReports() {
+    const goal = user?.goal || 2000;
+    let week = [];
+    try {
+      week = await API.getWeekSummary(user.username);
+    } catch (err) {
+      document.getElementById('insights').innerHTML =
+        `<div class="report-message bad">⚠️ ${err.message}</div>`;
+      return;
+    }
+    const labels = week.map(d => formatDay(d.date));
+    const values = week.map(d => d.calories);
+    const daysLogged = values.filter(v => v > 0).length;
+    const total = values.reduce((s, v) => s + v, 0);
+    const avg   = daysLogged > 0 ? Math.round(total / daysLogged) : 0;
+    const logged = values.filter(v => v > 0);
+    const best  = logged.length ? Math.min(...logged) : 0;
+
+    document.getElementById('weekTotal').textContent = total;
+    document.getElementById('weekAvg').textContent   = avg;
+    document.getElementById('bestDay').textContent   = best;
+
+    // Insights
+    renderInsights(week, goal);
+
+    // Chart
+    if (chartInstance) chartInstance.destroy();
+    chartInstance = new Chart(document.getElementById('weekChart'), {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [
+          {
+            label: 'Calories',
+            data: values,
+            backgroundColor: values.map(v =>
+              v === 0 ? 'rgba(0,0,0,0.05)' :
+              v > goal ? 'rgba(229,62,62,0.7)' : 'rgba(39,174,96,0.7)'
+            ),
+            borderColor: values.map(v =>
+              v === 0 ? 'rgba(0,0,0,0.1)' :
+              v > goal ? '#e53e3e' : '#27ae60'
+            ),
+            borderWidth: 1,
+            borderRadius: 6,
+          },
+          {
+            label: 'Daily Goal',
+            data: Array(7).fill(goal),
+            type: 'line',
+            borderColor: '#27ae60',
+            borderDash: [6, 4],
+            borderWidth: 2,
+            pointRadius: 0,
+            fill: false,
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { labels: { color: '#1a202c', font: { size: 12 } } },
+          tooltip: {
+            callbacks: {
+              label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y} kcal`
+            }
+          }
+        },
+        scales: {
+          x: { ticks: { color: '#718096' }, grid: { color: 'rgba(0,0,0,0.05)' } },
+          y: { ticks: { color: '#718096' }, grid: { color: 'rgba(0,0,0,0.05)' }, beginAtZero: true }
+        }
+      }
+    });
+
+  }
+
+  function renderInsights(week, goal) {
+    const messages = [];
+    const today = week[week.length - 1];
+    const yesterday = week[week.length - 2];
+
+    if (today.calories > 0 && yesterday.calories > 0) {
+      const diff = today.calories - yesterday.calories;
+      if (diff < 0) {
+        messages.push({ type: 'good', text: `You consumed ${Math.abs(diff)} fewer calories today than yesterday. Great discipline!` });
+      } else if (diff > 0) {
+        messages.push({ type: 'warn', text: `You consumed ${diff} more calories today than yesterday.` });
+      } else {
+        messages.push({ type: 'good', text: `Same calorie intake as yesterday. Consistent!` });
+      }
+    }
+
+    const daysOver = week.filter(d => d.calories > goal).length;
+    if (daysOver >= 3) {
+      messages.push({ type: 'bad', text: `You exceeded your goal on ${daysOver} days this week. Try to reduce portion sizes.` });
+    } else if (daysOver === 0 && week.filter(d => d.calories > 0).length >= 3) {
+      messages.push({ type: 'good', text: `You stayed within your calorie goal every day this week. Excellent!` });
+    }
+
+    const logged = week.filter(d => d.calories > 0).length;
+    if (logged < 3) {
+      messages.push({ type: 'warn', text: `Only ${logged} day(s) logged this week. Track your meals daily for better insights.` });
+    }
+
+    document.getElementById('insights').innerHTML = messages.map(m =>
+      `<div class="report-message ${m.type}">${m.text}</div>`
+    ).join('');
+  }
+
+  function formatDay(dateStr) {
+    const d = new Date(dateStr + 'T00:00:00');
+    return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  }
+
+  function logout() {
+    Session.clear();
+    window.location.href = '/index.html';
+  }
+</script>
+</body>
+</html>
