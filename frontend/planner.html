@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>NutriTrack — Meal Planner</title>
+  <link rel="stylesheet" href="css/style.css"/>
+</head>
+<body class="has-nav">
+
+<nav id="navbar">
+  <a class="nav-brand" href="/dashboard.html">NutriTrack</a>
+
+  <div class="nav-links">
+    <a href="/dashboard.html">Home</a>
+    <a href="/search.html">Search</a>
+    <a href="/planner.html" class="active">Planner</a>
+    <a href="/reports.html">Reports</a>
+  </div>
+
+  <div class="nav-right">
+    <div class="nav-profile" id="navProfile">
+      <div class="nav-avatar" id="navAvatar" onclick="toggleProfileMenu(event)"></div>
+      <div class="profile-dropdown" id="profileDropdown">
+        <div class="profile-dropdown-header">
+          <div class="mini-avatar" id="dropdownAvatar"></div>
+          <span id="dropdownName"></span>
+        </div>
+        <button onclick="openEditProfile()">✏️ Edit Profile</button>
+        <button class="logout-btn" onclick="logout()">🚪 Logout</button>
+      </div>
+    </div>
+    <button class="hamburger" id="hamburger" onclick="toggleMenu()" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+
+  <div class="mobile-menu" id="mobileMenu">
+    <a href="/dashboard.html">Home</a>
+    <a href="/search.html">Search</a>
+    <a href="/planner.html" class="active">Planner</a>
+    <a href="/reports.html">Reports</a>
+    <a href="#" onclick="logout()" class="mobile-logout">Logout</a>
+  </div>
+</nav>
+
+<div class="container">
+
+  <!-- Date selector -->
+  <div class="date-bar">
+    <button class="btn btn-outline btn-sm" onclick="changeDate(-1)">&#8592;</button>
+    <input type="date" id="dateInput" onchange="loadMeals()"/>
+    <button class="btn btn-outline btn-sm" onclick="changeDate(1)">&#8594;</button>
+    <button class="btn btn-outline btn-sm" onclick="goToday()">Today</button>
+  </div>
+
+  <!-- Daily progress -->
+  <div class="daily-summary">
+    <div style="text-align:center">
+      <div style="font-size:1.4rem;font-weight:700;color:var(--green)" id="totalCal">0</div>
+      <div style="font-size:0.75rem;color:var(--muted)">Total kcal</div>
+    </div>
+    <div class="progress-wrap">
+      <div class="progress-label">
+        <span id="progressLabel">0 / 2000 kcal</span>
+        <span id="progressPct">0%</span>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill" style="width:0%"></div>
+      </div>
+    </div>
+    <div style="text-align:center">
+      <div style="font-size:1.4rem;font-weight:700;color:var(--muted)" id="remainingCal">2000</div>
+      <div style="font-size:0.75rem;color:var(--muted)">Remaining</div>
+    </div>
+  </div>
+
+  <!-- Breakfast -->
+  <div class="card">
+    <div class="meal-header">
+      <h3>🌅 Breakfast</h3>
+      <span class="meal-total" id="breakfastTotal">0 kcal</span>
+    </div>
+    <div class="meal-items" id="breakfastItems"></div>
+    <div style="margin-top:0.8rem;display:flex;gap:0.5rem">
+      <input type="text" id="breakfastSearch" placeholder="Search food to add..." style="flex:1"/>
+      <button class="btn btn-green btn-sm" onclick="quickAdd('breakfast')">+ Add</button>
+    </div>
+    <div id="breakfastSuggestions" class="food-results" style="margin-top:0.5rem"></div>
+  </div>
+
+  <!-- Lunch -->
+  <div class="card">
+    <div class="meal-header">
+      <h3>☀️ Lunch</h3>
+      <span class="meal-total" id="lunchTotal">0 kcal</span>
+    </div>
+    <div class="meal-items" id="lunchItems"></div>
+    <div style="margin-top:0.8rem;display:flex;gap:0.5rem">
+      <input type="text" id="lunchSearch" placeholder="Search food to add..." style="flex:1"/>
+      <button class="btn btn-green btn-sm" onclick="quickAdd('lunch')">+ Add</button>
+    </div>
+    <div id="lunchSuggestions" class="food-results" style="margin-top:0.5rem"></div>
+  </div>
+
+  <!-- Dinner -->
+  <div class="card">
+    <div class="meal-header">
+      <h3>🌙 Dinner</h3>
+      <span class="meal-total" id="dinnerTotal">0 kcal</span>
+    </div>
+    <div class="meal-items" id="dinnerItems"></div>
+    <div style="margin-top:0.8rem;display:flex;gap:0.5rem">
+      <input type="text" id="dinnerSearch" placeholder="Search food to add..." style="flex:1"/>
+      <button class="btn btn-green btn-sm" onclick="quickAdd('dinner')">+ Add</button>
+    </div>
+    <div id="dinnerSuggestions" class="food-results" style="margin-top:0.5rem"></div>
+  </div>
+
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/nav.js"></script>
+<script>
+  const user = Session.require();
+
+  const goal = user?.goal || 2000;
+  const dateInput = document.getElementById('dateInput');
+  dateInput.value = localDate();
+
+  loadMeals();
+
+  // Returns today's date in YYYY-MM-DD using LOCAL timezone
+  function localDate(d = new Date()) {
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+
+  async function loadMeals() {
+    let data = { breakfast: [], lunch: [], dinner: [] };
+    try {
+      data = await API.getMeals(user.username, dateInput.value);
+    } catch (err) {
+      ['breakfast','lunch','dinner'].forEach(s => {
+        document.getElementById(`${s}Items`).innerHTML =
+          `<p style="color:var(--red);font-size:0.85rem">⚠️ ${err.message}</p>`;
+      });
+      return;
+    }
+    renderSlot('breakfast', data.breakfast);
+    renderSlot('lunch', data.lunch);
+    renderSlot('dinner', data.dinner);
+    updateTotals(data);
+  }
+
+  function renderSlot(slot, items) {
+    const container = document.getElementById(`${slot}Items`);
+    if (!items || items.length === 0) {
+      container.innerHTML = '<div class="empty-slot">No foods added yet</div>';
+      return;
+    }
+    container.innerHTML = items.map(food => `
+      <div class="meal-item">
+        <span class="meal-item-name">${food.name}</span>
+        <span style="font-size:0.75rem;color:var(--muted)">${food.serving || ''}</span>
+        <span class="meal-item-cal">${food.calories} kcal</span>
+        <button class="btn btn-red btn-sm" onclick="removeFood('${slot}', ${food.id})">✕</button>
+      </div>
+    `).join('');
+  }
+
+  function updateTotals(data) {
+    const slots = ['breakfast', 'lunch', 'dinner'];
+    let total = 0;
+    slots.forEach(slot => {
+      const cal = (data[slot] || []).reduce((s, f) => s + (f.calories || 0), 0);
+      document.getElementById(`${slot}Total`).textContent = `${cal} kcal`;
+      total += cal;
+    });
+
+    const pct = Math.min(100, Math.round((total / goal) * 100));
+    const remaining = Math.max(0, goal - total);
+
+    document.getElementById('totalCal').textContent = total;
+    document.getElementById('remainingCal').textContent = remaining;
+    document.getElementById('progressLabel').textContent = `${total} / ${goal} kcal`;
+    document.getElementById('progressPct').textContent = `${pct}%`;
+
+    const fill = document.getElementById('progressFill');
+    fill.style.width = pct + '%';
+    fill.classList.toggle('over', total > goal);
+  }
+
+  async function quickAdd(slot) {
+    const input = document.getElementById(`${slot}Search`);
+    const query = input.value.trim();
+    if (!query) return;
+
+    const suggestionsEl = document.getElementById(`${slot}Suggestions`);
+    suggestionsEl.innerHTML = '<span class="spinner"></span>';
+
+    const data = await API.searchFood(query);
+    if (data.error || !data.results.length) {
+      suggestionsEl.innerHTML = '<p style="color:var(--muted);font-size:0.8rem">No results found</p>';
+      return;
+    }
+
+    suggestionsEl.innerHTML = data.results.map((food, i) => `
+      <div class="food-card" style="cursor:pointer" onclick="confirmAdd('${slot}', ${i}, this)">
+        <div class="food-info">
+          <h3 style="font-size:0.85rem">${food.name}</h3>
+          <p>${food.serving}</p>
+        </div>
+        <div class="calories-badge">${food.calories} kcal</div>
+      </div>
+    `).join('');
+
+    suggestionsEl._results = data.results;
+  }
+
+  async function confirmAdd(slot, index, el) {
+    const food = el.closest('.food-results')._results[index];
+    const date = dateInput.value;
+    try {
+      await API.addMeal(user.username, date, slot, food);
+      document.getElementById(`${slot}Suggestions`).innerHTML = '';
+      document.getElementById(`${slot}Search`).value = '';
+      loadMeals();
+    } catch (err) {
+      alert('Could not add food: ' + err.message);
+    }
+  }
+
+  async function removeFood(slot, id) {
+    const date = dateInput.value;
+    try {
+      await API.removeMeal(user.username, date, slot, id);
+      loadMeals();
+    } catch (err) {
+      alert('Could not remove food: ' + err.message);
+    }
+  }
+
+  function changeDate(offset) {
+    const d = new Date(dateInput.value + 'T12:00:00'); // noon avoids DST edge cases
+    d.setDate(d.getDate() + offset);
+    dateInput.value = localDate(d);
+    loadMeals();
+  }
+
+  function goToday() {
+    dateInput.value = localDate();
+    loadMeals();
+  }
+
+  // Search on Enter key per slot
+  ['breakfast', 'lunch', 'dinner'].forEach(slot => {
+    document.getElementById(`${slot}Search`).addEventListener('keydown', e => {
+      if (e.key === 'Enter') quickAdd(slot);
+    });
+  });
+
+  function logout() {
+    Session.clear();
+    window.location.href = '/index.html';
+  }
+</script>
+</body>
+</html>
