@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>NutriTrack — Dashboard</title>
+  <link rel="stylesheet" href="css/style.css"/>
+</head>
+<body class="has-nav">
+
+<nav id="navbar">
+  <a class="nav-brand" href="/dashboard.html">NutriTrack</a>
+
+  <div class="nav-links">
+    <a href="/dashboard.html" class="active">Home</a>
+    <a href="/search.html">Search</a>
+    <a href="/planner.html">Planner</a>
+    <a href="/reports.html">Reports</a>
+  </div>
+
+  <div class="nav-right">
+    <div class="nav-profile" id="navProfile">
+      <div class="nav-avatar" id="navAvatar" onclick="toggleProfileMenu(event)"></div>
+      <div class="profile-dropdown" id="profileDropdown">
+        <div class="profile-dropdown-header">
+          <div class="mini-avatar" id="dropdownAvatar"></div>
+          <span id="dropdownName"></span>
+        </div>
+        <button onclick="openEditProfile()">✏️ Edit Profile</button>
+        <button class="logout-btn" onclick="logout()">🚪 Logout</button>
+      </div>
+    </div>
+    <button class="hamburger" id="hamburger" onclick="toggleMenu()" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+
+  <div class="mobile-menu" id="mobileMenu">
+    <a href="/dashboard.html" class="active">Home</a>
+    <a href="/search.html">Search</a>
+    <a href="/planner.html">Planner</a>
+    <a href="/reports.html">Reports</a>
+    <a href="#" onclick="logout()" class="mobile-logout">Logout</a>
+  </div>
+</nav>
+
+<div class="container">
+
+  <!-- Welcome + Progress card -->
+  <div class="card">
+    <div style="margin-bottom:1.2rem">
+      <h2 id="welcomeMsg" style="font-size:1.4rem;margin-bottom:0.3rem">Welcome back! 👋</h2>
+      <p id="motivationMsg" style="font-size:0.9rem;color:var(--muted)">Loading your progress...</p>
+    </div>
+    <div class="progress-label">
+      <span id="progressLabel">0 / 2000 kcal</span>
+      <span id="progressPct" style="font-weight:700;color:var(--green)">0%</span>
+    </div>
+    <div class="progress-bar" style="margin-top:0.4rem">
+      <div class="progress-fill" id="progressFill" style="width:0%"></div>
+    </div>
+  </div>
+
+  <!-- Goal setting -->
+  <div class="card">
+    <h2>Set Daily Calorie Goal</h2>
+    <div id="goalAlert" class="alert"></div>
+    <div style="display:flex;gap:0.8rem;align-items:center">
+      <input type="number" id="goalInput" placeholder="e.g. 2000" style="max-width:180px"/>
+      <button class="btn btn-green" onclick="saveGoal()">Save Goal</button>
+    </div>
+    <p style="font-size:0.8rem;color:var(--muted);margin-top:0.6rem">
+      Recommended: Men ~2500 kcal/day &nbsp;|&nbsp; Women ~2000 kcal/day
+    </p>
+  </div>
+
+  <!-- Today's meals summary -->
+  <div class="card">
+    <h2>Today's Meals</h2>
+    <div id="todayMealsSummary"></div>
+    <a href="/planner.html" style="font-size:0.85rem;color:var(--green);text-decoration:none;margin-top:0.8rem;display:inline-block">
+      + Open Meal Planner
+    </a>
+  </div>
+
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/nav.js"></script>
+<script>
+  const user = Session.require();
+
+  const motivations = [
+    'Every healthy choice counts. Keep it up!',
+    'You are what you eat — make it great!',
+    'Small steps lead to big results. Stay consistent!',
+    'Fuel your body right and your mind will follow.',
+    'Progress, not perfection. You\'re doing great!',
+    'One meal at a time. You\'ve got this!',
+    'Your health is your wealth. Invest wisely!',
+  ];
+
+  if (user) {
+    document.getElementById('goalInput').value = user.goal || 2000;
+    document.getElementById('welcomeMsg').textContent =
+      `Welcome back, ${user.username}! 👋`;
+    document.getElementById('motivationMsg').textContent =
+      motivations[new Date().getDay()];
+    loadDashboard();
+  }
+
+  function localDate(d = new Date()) {
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+
+  async function loadDashboard() {
+    const today = localDate();
+    const goal  = user.goal || 2000;
+
+    let dayMeals = { breakfast: [], lunch: [], dinner: [] };
+    try {
+      dayMeals = await API.getMeals(user.username, today);
+    } catch (err) {
+      document.getElementById('todayMealsSummary').innerHTML =
+        `<p style="color:var(--red);font-size:0.9rem">⚠️ ${err.message}</p>`;
+      return;
+    }
+
+    const allFoods = [...dayMeals.breakfast, ...dayMeals.lunch, ...dayMeals.dinner];
+    const total    = allFoods.reduce((s, f) => s + (f.calories || 0), 0);
+    const pct      = Math.min(100, Math.round((total / goal) * 100));
+
+    document.getElementById('progressLabel').textContent = `${total} / ${goal} kcal`;
+    document.getElementById('progressPct').textContent   = `${pct}%`;
+
+    const fill = document.getElementById('progressFill');
+    fill.style.width = pct + '%';
+    fill.classList.toggle('over', total > goal);
+
+    const slots = [
+      { label: '🌅 Breakfast', items: dayMeals.breakfast },
+      { label: '☀️ Lunch',     items: dayMeals.lunch     },
+      { label: '🌙 Dinner',    items: dayMeals.dinner    },
+    ];
+
+    document.getElementById('todayMealsSummary').innerHTML = slots.map(slot => {
+      const cal = slot.items.reduce((s, f) => s + (f.calories || 0), 0);
+      return `
+        <div style="display:flex;justify-content:space-between;padding:0.5rem 0;border-bottom:1px solid var(--border);font-size:0.9rem">
+          <span>${slot.label} <span style="color:var(--muted);font-size:0.8rem">(${slot.items.length} item${slot.items.length !== 1 ? 's' : ''})</span></span>
+          <span style="color:var(--green);font-weight:600">${cal} kcal</span>
+        </div>`;
+    }).join('');
+  }
+
+  async function saveGoal() {
+    const raw  = document.getElementById('goalInput').value.trim();
+    const goal = parseInt(raw);
+    const alertEl = document.getElementById('goalAlert');
+
+    if (!raw || isNaN(goal) || !/^\d+$/.test(raw)) {
+      alertEl.textContent = 'Please enter a valid number (no letters or symbols)';
+      alertEl.className = 'alert alert-error show';
+      return;
+    }
+
+    if (goal < 500 || goal > 10000) {
+      alertEl.textContent = 'Goal must be between 500 and 10,000 kcal';
+      alertEl.className = 'alert alert-error show';
+      return;
+    }
+
+    try {
+      const data = await API.updateProfile(user.username, { goal });
+      user.goal = goal;
+      Session.save({ ...user, ...data.user });
+
+      alertEl.textContent = `✓ Goal updated to ${goal} kcal/day`;
+      alertEl.className = 'alert alert-success show';
+      setTimeout(() => alertEl.className = 'alert', 3000);
+      loadDashboard();
+    } catch (err) {
+      alertEl.textContent = err.message;
+      alertEl.className = 'alert alert-error show';
+    }
+  }
+
+  function logout() {
+    Session.clear();
+    window.location.href = '/index.html';
+  }
+</script>
+</body>
+</html>
