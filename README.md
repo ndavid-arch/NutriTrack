@@ -1,3 +1,4 @@
+```markdown
 # NutriTrack — Calorie Tracking & Meal Planning App
 
 NutriTrack is a full-stack web application that helps users track their daily calorie intake, plan meals, and monitor their nutrition progress over time. It integrates the Edamam Food Database API to search for real nutritional data across thousands of foods, with support for dietary filters, weekly reports, and personalized calorie goals.
@@ -8,7 +9,9 @@ NutriTrack is a full-stack web application that helps users track their daily ca
 
 - **Web01:** `http://18.208.109.195`
 - **Web02:** `http://35.175.137.170`
-- **Load Balancer:** `http://54.165.134.239` ← main access point
+- **Load Balancer:** `https://nutritrack.sftracker.tech` ← main access point (HTTPS)
+
+> HTTP requests are automatically redirected to HTTPS.
 
 ---
 
@@ -38,6 +41,8 @@ NutriTrack is a full-stack web application that helps users track their daily ca
 | Process Manager | PM2 |
 | Web Server | Nginx (reverse proxy) |
 | Load Balancer | Nginx (upstream round-robin) |
+| SSL Certificate | Let's Encrypt (Certbot) |
+| CI/CD | GitHub Actions |
 
 ---
 
@@ -57,6 +62,9 @@ All API calls are made **server-side** through the Express backend. API keys are
 
 ```
 nutritrack/
+├── .github/
+│   └── workflows/
+│       └── deploy.yml      # GitHub Actions CI/CD pipeline
 ├── frontend/
 │   ├── index.html          # Login / Signup
 │   ├── dashboard.html      # Home — calorie goal + today's meals
@@ -78,6 +86,7 @@ nutritrack/
 │       └── meals.js        # Meal log CRUD endpoints
 ├── .env.example            # Environment variable template
 ├── .gitignore
+├── package-lock.json
 ├── package.json
 └── README.md
 ```
@@ -108,7 +117,11 @@ npm install
 
 ### 3. Configure environment variables
 
-Create a `.env` file in the root of the project:
+```bash
+mv .env.example .env
+```
+
+Edit `.env` with your credentials:
 
 ```env
 PORT=3000
@@ -139,16 +152,14 @@ Open your browser at `http://localhost:3000`
 
 ## Deployment
 
-Both **Web01** and **Web02** are configured identically. The **Load Balancer (Lb01)** distributes traffic between them using Nginx round-robin.
+Both **Web01** and **Web02** are configured identically. The **Load Balancer (Lb01)** distributes traffic between them using Nginx round-robin. All traffic is served over HTTPS via a Let's Encrypt SSL certificate.
 
 ### Step 1 — Install Node.js and Git on each web server
-
-SSH into Web01 and Web02 and run:
 
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
 sudo apt-get install -y nodejs git
-node -v   # confirm installation
+node -v
 ```
 
 ### Step 2 — Install PM2
@@ -157,42 +168,38 @@ node -v   # confirm installation
 sudo npm install -g pm2
 ```
 
-PM2 keeps the Node.js server running after SSH sessions end and restarts it automatically if it crashes.
-
-### Step 3 — Clone the repository on each server
+### Step 3 — Clone the repository
 
 ```bash
 cd /var/www
 sudo git clone https://github.com/ndavid-arch/NutriTrack.git
+sudo chown -R ubuntu:ubuntu /var/www/NutriTrack
 cd NutriTrack
-sudo npm install
+npm install
 ```
 
 ### Step 4 — Set up the environment file
 
 ```bash
-sudo tee /var/www/NutriTrack/.env << 'EOF'
-PORT=3000
-DATABASE_URL=your_postgresql_connection_string
-EDAMAM_APP_ID=your_edamam_app_id
-EDAMAM_APP_KEY=your_edamam_app_key
-EOF
+mv /var/www/NutriTrack/.env.example /var/www/NutriTrack/.env
+nano /var/www/NutriTrack/.env
 ```
 
 ### Step 5 — Run the database migration
 
+Only needs to run once on Web01 — both servers share the same Aiven database:
+
 ```bash
-cd /var/www/NutriTrack
-sudo node backend/migrate.js
+node /var/www/NutriTrack/backend/migrate.js
 ```
 
 ### Step 6 — Start the app with PM2
 
 ```bash
 cd /var/www/NutriTrack
-sudo pm2 start backend/server.js --name nutritrack
-sudo pm2 startup
-sudo pm2 save
+pm2 start backend/server.js --name nutritrack
+pm2 startup   # copy and run the command it outputs
+pm2 save
 ```
 
 ### Step 7 — Configure Nginx as a reverse proxy
@@ -208,11 +215,11 @@ server {
     listen 80;
     server_name _;
 
-    # Serve static frontend files
     root /var/www/NutriTrack/frontend;
     index index.html;
 
-    # Proxy API requests to Node.js backend
+    add_header X-Served-By "Web01";   # use "Web02" on the second server
+
     location /api/ {
         proxy_pass http://localhost:3000;
         proxy_http_version 1.1;
@@ -222,7 +229,6 @@ server {
         proxy_cache_bypass $http_upgrade;
     }
 
-    # Serve frontend pages directly
     location / {
         try_files $uri $uri/ /index.html;
     }
@@ -238,13 +244,13 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-Repeat **Steps 1–7** on Web02.
+Repeat Steps 1–7 on Web02 (change `X-Served-By` to `"Web02"`).
 
 ---
 
 ## Load Balancer Configuration
 
-SSH into **Lb01** and configure Nginx to distribute traffic between Web01 and Web02:
+SSH into Lb01 and configure Nginx:
 
 ```bash
 sudo nano /etc/nginx/sites-available/nutritrack-lb
@@ -254,19 +260,20 @@ Paste:
 
 ```nginx
 upstream nutritrack_backend {
-    server 18.208.109.195;
-    server 35.175.137.170;
+    server 18.208.109.195:80 max_fails=1 fail_timeout=30s;
+    server 35.175.137.170:80 max_fails=2 fail_timeout=10s;
 }
 
 server {
     listen 80;
-    server_name _;
+    server_name nutritrack.sftracker.tech;
 
     location / {
         proxy_pass http://nutritrack_backend;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_pass_header X-Served-By;
     }
 }
 ```
@@ -282,25 +289,66 @@ sudo systemctl reload nginx
 
 ### Verify load balancing
 
-Send multiple requests and confirm both servers respond:
-
 ```bash
-for i in {1..6}; do curl -s http://54.165.134.239 | grep -o "NutriTrack"; done
+for i in {1..6}; do curl -sI https://nutritrack.sftracker.tech | grep X-Served-By; done
 ```
 
-You can also verify from PM2 logs on each server:
+---
+
+## SSL Certificate (HTTPS)
+
+HTTPS is configured on the load balancer using a free Let's Encrypt certificate via Certbot.
+
+### Install Certbot
 
 ```bash
-pm2 logs nutritrack
+sudo apt install certbot python3-certbot-nginx -y
 ```
 
-Incoming requests should alternate between Web01 and Web02.
+### Obtain and install the certificate
+
+```bash
+sudo certbot --nginx -d nutritrack.sftracker.tech
+```
+
+When prompted, select option **2 (Redirect)** to automatically redirect all HTTP traffic to HTTPS.
+
+### Auto-renewal test
+
+```bash
+sudo certbot renew --dry-run
+```
+
+> Certificate expires 2026-06-27 and renews automatically.
+
+---
+
+## CI/CD Pipeline
+
+Every push to the `main` branch automatically deploys to both Web01 and Web02 using GitHub Actions.
+
+### How it works
+
+```
+Push to main → GitHub Actions → SSH into Web01 & Web02 → git pull → npm install → pm2 restart
+```
+
+### Setup
+
+Add the following secrets to your GitHub repo under **Settings → Secrets and variables → Actions**:
+
+| Secret | Value |
+|---|---|
+| `SSH_PRIVATE_KEY` | Contents of your `~/.ssh/id_rsa` private key |
+| `WEB01_IP` | `18.208.109.195` |
+| `WEB02_IP` | `35.175.137.170` |
+| `SSH_USER` | `ubuntu` |
+
+The workflow file is already included at `.github/workflows/deploy.yml`. Push any change to `main` and go to the **Actions** tab on GitHub to watch it run.
 
 ---
 
 ## Input Validation
-
-All user inputs are validated with regex before any data is processed or stored.
 
 | Field | Rule | Regex / Constraint |
 |---|---|---|
@@ -310,13 +358,6 @@ All user inputs are validated with regex before any data is processed or stored.
 | Height | Numbers only, 50–272 cm | `/^\d+$/` + range check |
 | Weight | Numbers only, 20–500 kg | `/^\d+$/` + range check |
 | Daily Calorie Goal | Numbers only, 500–10000 kcal | `/^\d+$/` + range check |
-
-**Rules enforced:**
-- Letters cannot be entered in numeric fields (height, weight, calories)
-- Numbers cannot be entered in the username field
-- Fields cannot be left empty — all are required before submission
-- Emails with capital letters are rejected
-- Passwords shorter than 8 characters or missing any character class are rejected
 
 ---
 
@@ -342,6 +383,8 @@ All user inputs are validated with regex before any data is processed or stored.
 - **Data Visualization** — Chart.js 7-day calorie trend with a dashed daily goal line
 - **Advanced Input Validation** — Regex on all forms (password strength, email domain whitelist, numeric ranges)
 - **Dietary Filter System** — 6 one-click health label filters (Vegan, Gluten-Free, Dairy-Free, Keto, Paleo, Sugar-Free)
+- **HTTPS & SSL** — Let's Encrypt certificate with automatic HTTP → HTTPS redirect
+- **CI/CD Pipeline** — GitHub Actions auto-deploys on every push to main
 
 ---
 
@@ -360,22 +403,27 @@ The Nutrition Analysis API only accepts specific ingredient strings like `"1 cup
 `new Date().toISOString()` returns UTC time, causing the wrong date to appear for users in UTC+ timezones. Fixed with a local date helper function using `getFullYear()`, `getMonth()`, and `getDate()`.
 
 **5. File permission errors on server**
-Using `sudo git clone` made all files owned by root, preventing direct file creation with `nano`. Fixed by using `sudo tee` to write files as root when creating the `.env` on the server.
+Using `sudo git clone` made all files owned by root, preventing direct file creation with `nano`. Fixed by using `chown` to transfer ownership to the ubuntu user.
+
+**6. HAProxy conflict on load balancer**
+The school-provisioned Lb01 had HAProxy pre-installed and occupying port 80, preventing Nginx from starting. Fixed by stopping and disabling HAProxy with `sudo systemctl stop haproxy && sudo systemctl disable haproxy`.
+
+**7. Web01 slow response via public IP**
+AWS hairpin NAT caused Web01 to take 130 seconds when connecting to its own public IP. Fixed by configuring `max_fails=1 fail_timeout=30s` on the load balancer so failed requests to Web01 immediately fall back to Web02.
 
 ---
 
 ## Credits & Attribution
 
 - **Edamam Food Database API** — https://developer.edamam.com
-  Food nutritional data, dietary labels, and search powered by Edamam
 - **Chart.js** — https://www.chartjs.org
-  Used for the 7-day calorie trend visualization
 - **Aiven PostgreSQL** — https://aiven.io
-  Cloud-hosted PostgreSQL database for users, meals, and food cache
 - **Express.js** — https://expressjs.com
 - **Axios** — https://axios-http.com
 - **dotenv** — https://github.com/motdotla/dotenv
-- **PM2** — https://pm2.keymetrics.io
+- **PM2** — https://pm2.keymatrics.io
+- **Let's Encrypt / Certbot** — https://letsencrypt.org
+- **GitHub Actions** — https://github.com/features/actions
 
 ---
 
@@ -386,10 +434,14 @@ Using `sudo git clone` made all files owned by root, preventing direct file crea
 - Passwords are encoded before storage
 - All user inputs are validated with regex before processing
 - SQL queries use parameterized statements to prevent SQL injection
+- HTTPS enforced via Let's Encrypt SSL certificate with automatic HTTP redirect
 - `.env` file contents are provided in the assignment submission comment section as instructed
 
 ---
 
 ## Author
 
-Built as part of the ALX Software Engineering curriculum — Playing Around with APIs assignment.
+NTWALI Beni David
+git commit -m "Update README with HTTPS, SSL, CI/CD and final deployment config"
+git push origin main
+```
