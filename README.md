@@ -1,14 +1,15 @@
-```markdown
-# NutriTrack — Calorie Tracking & Meal Planning App
+# NutriTrack 
+# Calorie Tracking & Meal Planning App
 
 NutriTrack is a full-stack web application that helps users track their daily calorie intake, plan meals, and monitor their nutrition progress over time. It integrates the Edamam Food Database API to search for real nutritional data across thousands of foods, with support for dietary filters, weekly reports, and personalized calorie goals.
 
 ---
 
 ## Live Demo
+Demo Vidoe: (https://www.loom.com/share/75f9d23fac9648ff9fe594aa00bc1381)
 
-- **Web01:** `http://18.208.109.195`
-- **Web02:** `http://35.175.137.170`
+## TRY IT
+
 - **Load Balancer:** `https://nutritrack.sftracker.tech` ← main access point (HTTPS)
 
 > HTTP requests are automatically redirected to HTTPS.
@@ -56,8 +57,6 @@ NutriTrack is a full-stack web application that helps users track their daily ca
 
 All API calls are made **server-side** through the Express backend. API keys are never exposed to the browser.
 
----
-
 ## Project Structure
 
 ```
@@ -90,8 +89,6 @@ nutritrack/
 ├── package.json
 └── README.md
 ```
-
----
 
 ## Local Setup
 
@@ -442,6 +439,4 @@ AWS hairpin NAT caused Web01 to take 130 seconds when connecting to its own publ
 ## Author
 
 NTWALI Beni David
-git commit -m "Update README with HTTPS, SSL, CI/CD and final deployment config"
-git push origin main
 ```
