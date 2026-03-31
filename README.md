@@ -439,4 +439,3 @@ AWS hairpin NAT caused Web01 to take 130 seconds when connecting to its own publ
 ## Author
 
 NTWALI Beni David
-```
